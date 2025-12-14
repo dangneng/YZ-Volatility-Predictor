@@ -63,8 +63,8 @@ Market Data (OHLC + VIX)
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/volatility-predictor.git
-cd volatility-predictor
+git clone https://github.com/dangneng/YZ-Volatility-Predictor
+cd YZ-Volatility-Predictor
 
 # Create virtual environment (recommended)
 python -m venv venv
@@ -91,6 +91,10 @@ pydantic>=2.0.0
 ```
 
 ## Quick Start
+
+### Live Demo
+
+**Live App:** [https://yz-volatility-predictor.onrender.com](https://yz-volatility-predictor.onrender.com)
 
 ### Running the Web Interface
 
@@ -256,6 +260,7 @@ volatility-predictor/
 ├── main.py                 # FastAPI application & web UI
 ├── helper.py               # Core functions (preprocess, evaluate, models -- For backtesting etc.)
 ├── README.md               # This file
+├── requirements.txt        # Dependencies
 ├── .gitignore              # Git ignore rules (optional)
 └── notebooks/              # Jupyter notebooks for analysis (optional)
 ```
