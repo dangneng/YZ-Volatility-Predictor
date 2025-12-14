@@ -90,7 +90,7 @@ joblib>=1.3.0
 pydantic>=2.0.0
 ```
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Running the Web Interface
 
