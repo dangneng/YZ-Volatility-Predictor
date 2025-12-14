@@ -16,8 +16,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LassoCV, Ridge
 from sklearn.neighbors import KNeighborsRegressor
 from sklearn.ensemble import StackingRegressor
-# from statsmodels.tsa.arima.model import ARIMA   # ARMA
-from arch import arch_model                     # GARCH
+from arch import arch_model
 from xgboost import XGBRegressor
 
 app = FastAPI(title="Volatility Prediction API")
