@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from datetime import datetime
 from xgboost import XGBRegressor
@@ -17,10 +18,11 @@ from sklearn.linear_model import LassoCV, Ridge
 from sklearn.neighbors import KNeighborsRegressor
 from sklearn.ensemble import StackingRegressor
 from arch import arch_model
-from xgboost import XGBRegressor
+import os
 
 app = FastAPI(title="Volatility Prediction API")
 
+# CORS middleware for deployment
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -45,7 +47,6 @@ class PredictionResponse(BaseModel):
 model = None
 
 def get_yz_vol(data):
-
     # length
     n = len(data)
 
@@ -79,16 +80,15 @@ def get_yz_vol(data):
 
 def get_next_trading_day(date: pd.Timestamp, exchange: str = "NYSE"):
     cal = mcal.get_calendar(exchange)
-    schedule = cal.schedule(start_date=date, end_date=date + pd.Timedelta(days=10)) # 10 days to be safe (long weekends)
+    schedule = cal.schedule(start_date=date, end_date=date + pd.Timedelta(days=10))
     return schedule.index[1]
 
 def get_previous_trading_day(date: pd.Timestamp, exchange: str = "NYSE"):
     cal = mcal.get_calendar(exchange)
-    schedule = cal.schedule(start_date=date - pd.Timedelta(days=10), end_date=date - pd.Timedelta(days = 1)) # 10 days to be safe (long weekends)
+    schedule = cal.schedule(start_date=date - pd.Timedelta(days=10), end_date=date - pd.Timedelta(days = 1))
     return schedule.index[-1]
 
 def preprocess(symbol : str, target_date : str, years : int | float = 2, underlying_ar : bool = False, lag : int = 2):
-    
     # retrieving data
     data = yf.download([symbol], start = pd.to_datetime(target_date) - pd.Timedelta(days = int(years * 365)), end = target_date, progress = False).droplevel(level = "Ticker", axis = 1)
     vix = yf.download(["^VIX"], start = pd.to_datetime(target_date) - pd.Timedelta(days = int(years * 365)), end = target_date, progress = False).droplevel(level = "Ticker", axis = 1)[["Close"]].rename({"Close" : "vix"}, axis = 1)
@@ -179,12 +179,12 @@ def train_model(X, y):
         "eval_metric" : mean_squared_error
     }
     lasso_params = {
-    "alphas" : [1.0, 0.1, 0.01], # strong, normal, weak (0.001 too weak, almost never converges)
-    "cv" : 5,
-    "max_iter" : 10000, # for convergence
-    "tol" : 1e-4,
-    "selection" : "random"
-}
+        "alphas" : [1.0, 0.1, 0.01],
+        "cv" : 5,
+        "max_iter" : 10000,
+        "tol" : 1e-4,
+        "selection" : "random"
+    }
     
     estimators = [
         ("XGB", XGBRegressor(**xgb_params)),
@@ -213,18 +213,20 @@ async def load_model():
 
 @app.get("/", response_class=HTMLResponse)
 async def serve_ui():
-    """Serve the web UI - No Node.js needed!"""
+    """Serve the web UI"""
     return """
     <!DOCTYPE html>
     <html lang="en">
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Volatility Predictor</title>
+        <title>Volatility Predictor - Live Deployment</title>
         <script src="https://cdn.tailwindcss.com"></script>
         <style>
             @keyframes spin { to { transform: rotate(360deg); } }
             .animate-spin { animation: spin 1s linear infinite; }
+            @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
+            .animate-pulse { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
         </style>
     </head>
     <body class="bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 min-h-screen">
@@ -237,8 +239,10 @@ async def serve_ui():
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path>
                         </svg>
                         <h1 class="text-4xl font-bold text-white">Volatility Predictor</h1>
+                        <span class="px-3 py-1 bg-green-500/20 border border-green-400/30 rounded-full text-green-300 text-sm font-semibold">LIVE</span>
                     </div>
                     <p class="text-slate-300 text-lg">ML-powered Yang-Zhang volatility forecasting with GARCH and ensemble models</p>
+                    <p class="text-slate-400 text-sm mt-2">Deployed with FastAPI • XGBoost + Lasso + KNN Stack</p>
                 </div>
 
                 <!-- Input Form -->
@@ -247,7 +251,7 @@ async def serve_ui():
                         <div>
                             <label class="block text-white font-semibold mb-2">Ticker Symbol</label>
                             <input type="text" id="ticker" placeholder="e.g., AAPL, TSLA, SPY" 
-                                   class="w-full px-4 py-3 rounded-lg bg-white/20 border border-white/30 text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-400">
+                                   class="w-full px-4 py-3 rounded-lg bg-white/20 border border-white/30 text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-400 uppercase">
                         </div>
                         <div>
                             <label class="block text-white font-semibold mb-2">Target Date</label>
@@ -255,9 +259,28 @@ async def serve_ui():
                                    class="w-full px-4 py-3 rounded-lg bg-white/20 border border-white/30 text-white focus:outline-none focus:ring-2 focus:ring-blue-400">
                         </div>
                         <button onclick="predictVolatility()" id="predictBtn"
-                                class="w-full bg-gradient-to-r from-blue-500 to-purple-600 text-white font-bold py-4 px-6 rounded-lg hover:from-blue-600 hover:to-purple-700 transition-all duration-200 shadow-lg">
-                            Predict Volatility
+                                class="w-full bg-gradient-to-r from-blue-500 to-purple-600 text-white font-bold py-4 px-6 rounded-lg hover:from-blue-600 hover:to-purple-700 transition-all duration-200 shadow-lg hover:shadow-xl transform hover:scale-[1.02]">
+                            <span class="flex items-center justify-center gap-2">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+                                </svg>
+                                Predict Volatility
+                            </span>
                         </button>
+                    </div>
+                </div>
+
+                <!-- Loading State -->
+                <div id="loadingDiv" class="hidden bg-blue-500/20 border border-blue-400/30 rounded-xl p-6 mb-6 backdrop-blur-sm">
+                    <div class="flex items-center gap-4">
+                        <svg class="animate-spin h-8 w-8 text-blue-400" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        <div>
+                            <h3 class="text-blue-200 font-semibold">Processing Prediction</h3>
+                            <p class="text-blue-300 text-sm">Training ensemble model and calculating volatility...</p>
+                        </div>
                     </div>
                 </div>
 
@@ -276,23 +299,44 @@ async def serve_ui():
 
                 <!-- Results Display -->
                 <div id="resultsDiv" class="hidden bg-white/10 backdrop-blur-md rounded-2xl shadow-2xl p-8 border border-white/20">
-                    <h2 class="text-2xl font-bold text-white mb-6">Prediction Results</h2>
+                    <h2 class="text-2xl font-bold text-white mb-6 flex items-center gap-2">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                        Prediction Results
+                    </h2>
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div class="bg-blue-500/20 rounded-xl p-6 border border-blue-400/30">
-                            <p class="text-blue-300 text-sm font-semibold mb-2">PREDICTED VOLATILITY</p>
-                            <p id="predVol" class="text-4xl font-bold text-white">--</p>
+                        <div class="bg-gradient-to-br from-blue-500/30 to-blue-600/30 rounded-xl p-6 border border-blue-400/40 shadow-lg">
+                            <p class="text-blue-300 text-sm font-semibold mb-2 flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path>
+                                </svg>
+                                PREDICTED VOLATILITY
+                            </p>
+                            <p id="predVol" class="text-5xl font-bold text-white mb-1">--</p>
+                            <p class="text-blue-200 text-xs">Yang-Zhang Estimator</p>
                         </div>
-                        <div class="bg-purple-500/20 rounded-xl p-6 border border-purple-400/30">
-                            <p class="text-purple-300 text-sm font-semibold mb-2">CONFIDENCE INTERVAL</p>
-                            <p id="confInt" class="text-white text-lg">--</p>
+                        <div class="bg-gradient-to-br from-purple-500/30 to-purple-600/30 rounded-xl p-6 border border-purple-400/40 shadow-lg">
+                            <p class="text-purple-300 text-sm font-semibold mb-2 flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+                                </svg>
+                                95% CONFIDENCE INTERVAL
+                            </p>
+                            <p id="confInt" class="text-xl font-semibold text-white">--</p>
                         </div>
                         <div class="md:col-span-2 bg-slate-500/20 rounded-xl p-6 border border-slate-400/30">
-                            <p class="text-slate-300 text-sm font-semibold mb-3">MODEL CONTRIBUTIONS</p>
-                            <div id="modelContrib" class="space-y-2"></div>
+                            <p class="text-slate-300 text-sm font-semibold mb-4 flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z"></path>
+                                </svg>
+                                MODEL CONTRIBUTIONS (Stacking Ensemble)
+                            </p>
+                            <div id="modelContrib" class="space-y-3"></div>
                         </div>
                         <div class="md:col-span-2 bg-slate-500/20 rounded-xl p-6 border border-slate-400/30">
-                            <p class="text-slate-300 text-sm font-semibold mb-2">DETAILS</p>
-                            <div class="grid grid-cols-2 gap-4 text-white" id="details"></div>
+                            <p class="text-slate-300 text-sm font-semibold mb-3">PREDICTION DETAILS</p>
+                            <div class="grid grid-cols-2 gap-4 text-white text-sm" id="details"></div>
                         </div>
                     </div>
                 </div>
@@ -302,13 +346,15 @@ async def serve_ui():
         <script>
             // Set min date to today
             document.getElementById('targetDate').min = new Date().toISOString().split('T')[0];
+            document.getElementById('targetDate').value = new Date().toISOString().split('T')[0];
 
             async function predictVolatility() {
-                const ticker = document.getElementById('ticker').value.trim();
+                const ticker = document.getElementById('ticker').value.trim().toUpperCase();
                 const targetDate = document.getElementById('targetDate').value;
                 const btn = document.getElementById('predictBtn');
                 const errorDiv = document.getElementById('errorDiv');
                 const resultsDiv = document.getElementById('resultsDiv');
+                const loadingDiv = document.getElementById('loadingDiv');
 
                 if (!ticker || !targetDate) {
                     showError('Please fill in all fields');
@@ -317,7 +363,8 @@ async def serve_ui():
 
                 // Show loading
                 btn.disabled = true;
-                btn.innerHTML = '<svg class="animate-spin h-5 w-5 mx-auto" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>';
+                btn.classList.add('opacity-50', 'cursor-not-allowed');
+                loadingDiv.classList.remove('hidden');
                 errorDiv.classList.add('hidden');
                 resultsDiv.classList.add('hidden');
 
@@ -325,7 +372,7 @@ async def serve_ui():
                     const response = await fetch('/predict', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ ticker: ticker.toUpperCase(), target_date: targetDate })
+                        body: JSON.stringify({ ticker: ticker, target_date: targetDate })
                     });
 
                     if (!response.ok) {
@@ -339,7 +386,8 @@ async def serve_ui():
                     showError(err.message);
                 } finally {
                     btn.disabled = false;
-                    btn.innerHTML = 'Predict Volatility';
+                    btn.classList.remove('opacity-50', 'cursor-not-allowed');
+                    loadingDiv.classList.add('hidden');
                 }
             }
 
@@ -362,22 +410,36 @@ async def serve_ui():
                     contrib.innerHTML = '';
                     for (const [model, weight] of Object.entries(data.model_contributions)) {
                         contrib.innerHTML += `
-                            <div class="flex justify-between items-center">
-                                <span class="text-white capitalize">${model}</span>
-                                <span class="text-slate-300">${(weight * 100).toFixed(1)}</span>
+                            <div>
+                                <div class="flex justify-between items-center mb-2">
+                                    <span class="text-white font-medium">${model}</span>
+                                    <span class="text-slate-300 font-semibold">${(weight * 100).toFixed(1)}%</span>
+                                </div>
+                                <div class="w-full bg-slate-700/50 rounded-full h-2.5">
+                                    <div class="bg-gradient-to-r from-blue-500 to-purple-600 h-2.5 rounded-full transition-all duration-500" 
+                                         style="width: ${weight * 100}%"></div>
+                                </div>
                             </div>`;
                     }
                 }
 
                 document.getElementById('details').innerHTML = `
-                    <div><p class="text-slate-400 text-sm">Ticker</p><p class="font-semibold">${data.ticker}</p></div>
-                    <div><p class="text-slate-400 text-sm">Target Date</p><p class="font-semibold">${data.target_date}</p></div>
-                    <div><p class="text-slate-400 text-sm">Model Type</p><p class="font-semibold">${data.model_type}</p></div>
-                    <div><p class="text-slate-400 text-sm">Timestamp</p><p class="font-semibold">${new Date(data.timestamp).toLocaleString()}</p></div>
+                    <div><p class="text-slate-400 text-xs mb-1">Ticker</p><p class="font-semibold">${data.ticker}</p></div>
+                    <div><p class="text-slate-400 text-xs mb-1">Target Date</p><p class="font-semibold">${data.target_date}</p></div>
+                    <div><p class="text-slate-400 text-xs mb-1">Model Type</p><p class="font-semibold">${data.model_type}</p></div>
+                    <div><p class="text-slate-400 text-xs mb-1">Timestamp</p><p class="font-semibold">${new Date(data.timestamp).toLocaleString()}</p></div>
                 `;
 
                 document.getElementById('resultsDiv').classList.remove('hidden');
             }
+
+            // Allow Enter key to submit
+            document.getElementById('ticker').addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') predictVolatility();
+            });
+            document.getElementById('targetDate').addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') predictVolatility();
+            });
         </script>
     </body>
     </html>
@@ -465,7 +527,15 @@ async def predict_volatility(request: PredictionRequest):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/health")
+async def health_check():
+    """Health check endpoint for deployment platforms"""
+    return {"status": "healthy", "service": "volatility-predictor"}
+
 if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8000))
     print("🚀 Starting Volatility Prediction Server...")
-    print("📱 Open http://localhost:8000 in your browser")
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    print(f"📱 Open http://localhost:{port} in your browser")
+    print(f"🌐 Server running on port {port}")
+    print("=" * 50)
+    uvicorn.run(app, host="0.0.0.0", port=port)
