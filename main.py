@@ -175,8 +175,7 @@ def train_model(X, y):
         "learning_rate" : 0.15, 
         "max_depth" : 4,
         "subsample" : 0.8,
-        "colsample_bytree" : 0.8,
-        "eval_metric" : mean_squared_error
+        "colsample_bytree" : 0.8
     }
     lasso_params = {
         "alphas" : [1.0, 0.1, 0.01],
